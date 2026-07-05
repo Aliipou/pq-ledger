@@ -13,6 +13,11 @@ core of a small ecosystem of independent repos:
 pq-ledger does exactly one thing well: it keeps a set of accounts and balanced
 postings correct, replayable, and tamper-evident. Nothing else.
 
+> Where authorization is concerned, pq-ledger holds **no authority**: its
+> capability gate is a stub for the Decision OS pipeline (FDK legitimacy →
+> AuthGate authority), which the host wires in. See "The AuthGate boundary stub"
+> below.
+
 ## What it is
 
 - **Double-entry.** Every posting is a set of lines; the sum of debits equals
