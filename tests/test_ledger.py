@@ -9,19 +9,19 @@ import threading
 import unittest
 
 from pq_ledger import (
-    Ledger,
-    Posting,
-    Line,
-    AuditLog,
-    Metrics,
-    EventEmitter,
-    allow_all,
-    deny_all,
     AuthorizationError,
-    InsufficientFundsError,
     DuplicateIdempotencyKeyError,
+    EventEmitter,
+    InsufficientFundsError,
+    Ledger,
+    LedgerError,
+    Line,
+    Metrics,
+    Posting,
     UnbalancedPostingError,
     UnknownAccountError,
+    allow_all,
+    deny_all,
 )
 
 
@@ -55,7 +55,7 @@ class TestPostingValidation(unittest.TestCase):
             Line("a", debit=True)
 
     def test_empty_idempotency_key_rejected(self):
-        with self.assertRaises(Exception):
+        with self.assertRaises(LedgerError):
             Posting(idempotency_key="", lines=(Line("a", debit=1), Line("b", credit=1)))
 
 

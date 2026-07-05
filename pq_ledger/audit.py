@@ -11,14 +11,26 @@ sequence of payloads, the same chain is produced bit-for-bit on any machine.
 This is tamper-EVIDENCE, not tamper-PROOFING. See THREAT_MODEL.md: an attacker
 who can rewrite the whole log can recompute a fresh consistent chain. The chain
 detects partial/blind edits, not a full re-forge by a writer with full access.
+
+Durability
+----------
+By default the log is purely in-memory. When constructed with a ``path`` it is
+*also* persisted: every appended entry is written as one canonical JSON line and
+flushed + ``fsync``-ed to disk before :meth:`append` returns, so a process crash
+loses nothing that was acknowledged. :meth:`AuditLog.from_file` reloads the log
+and verifies the hash chain on load. This adds durability only; it owns no
+secrets and performs no signing (still tamper-evident, not tamper-proof; see
+THREAT_MODEL.md).
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, asdict
-from typing import Any, Iterator, Mapping
+import os
+from collections.abc import Iterator, Mapping
+from dataclasses import asdict, dataclass
+from typing import Any
 
 from .errors import TamperError
 
@@ -69,23 +81,125 @@ class AuditEntry:
 
 
 class AuditLog:
-    """An ordered, append-only chain of :class:`AuditEntry`."""
+    """An ordered, append-only chain of :class:`AuditEntry`.
 
-    def __init__(self) -> None:
+    In-memory by default. When ``path`` is given the chain is *also* durably
+    persisted: each appended entry is written as one canonical JSON line and
+    flushed + ``fsync``-ed before :meth:`append` returns, so an acknowledged
+    append survives a process crash. The in-memory default keeps existing
+    behaviour unchanged.
+    """
+
+    def __init__(self, path: str | os.PathLike[str] | None = None) -> None:
         self._entries: list[AuditEntry] = []
+        self._path: str | None = os.fspath(path) if path is not None else None
+        self._fh = None  # lazily-opened append handle when file-backed
+        if self._path is not None:
+            # Open for append; create if absent. Line-buffered text mode; we
+            # explicitly flush + fsync per append for durability.
+            self._fh = open(self._path, "a", encoding="utf-8", newline="\n")
+
+    # -- durability -----------------------------------------------------------
+
+    @property
+    def path(self) -> str | None:
+        """The backing file path, or None for a pure in-memory log."""
+        return self._path
+
+    def _persist(self, entry: AuditEntry) -> None:
+        """Durably append one entry as a single canonical JSON line.
+
+        The line is the entry's full record (seq, prev_hash, entry_hash,
+        payload) so a reload can reconstruct AND re-verify the chain. Flushed
+        and fsynced before returning so a crash cannot lose an acked append.
+        """
+        if self._fh is None:
+            return
+        line = json.dumps(
+            entry.to_dict(),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        )
+        self._fh.write(line + "\n")
+        self._fh.flush()
+        os.fsync(self._fh.fileno())
+
+    def close(self) -> None:
+        """Close the backing file handle, if any. Idempotent.
+
+        Durability does not depend on this: every append is already flushed and
+        fsynced. ``close`` just releases the OS handle for a graceful shutdown;
+        an ungraceful crash loses nothing acknowledged.
+        """
+        if self._fh is not None:
+            self._fh.close()
+            self._fh = None
+
+    def __enter__(self) -> AuditLog:
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self.close()
 
     # -- append-only mutation -------------------------------------------------
 
     def append(self, payload: Mapping[str, Any]) -> AuditEntry:
-        """Append a payload, computing and linking its chained hash."""
+        """Append a payload, computing and linking its chained hash.
+
+        When file-backed, the entry is durably written (flush + fsync) to disk
+        before this returns.
+        """
         seq = len(self._entries)
         prev_hash = self._entries[-1].entry_hash if self._entries else GENESIS_PREV_HASH
         # Freeze a defensive copy so later caller mutation can't desync the hash.
         frozen = dict(payload)
         entry_hash = compute_hash(seq, prev_hash, frozen)
         entry = AuditEntry(seq=seq, prev_hash=prev_hash, entry_hash=entry_hash, payload=frozen)
+        self._persist(entry)
         self._entries.append(entry)
         return entry
+
+    @classmethod
+    def from_file(cls, path: str | os.PathLike[str]) -> AuditLog:
+        """Load a file-backed log from ``path`` and verify its hash chain.
+
+        Reads each JSON line back into an :class:`AuditEntry`, rebuilds the
+        in-memory chain, runs :meth:`verify` (so a corrupted/edited line is
+        DETECTED here, raising :class:`TamperError`), and returns a log that is
+        ready to durably append further entries to the same file.
+        """
+        log = cls.__new__(cls)
+        log._entries = []
+        log._path = os.fspath(path)
+        log._fh = None
+
+        with open(log._path, encoding="utf-8") as fh:
+            for lineno, raw in enumerate(fh):
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise TamperError(f"malformed audit line {lineno}: {exc}") from exc
+                try:
+                    entry = AuditEntry(
+                        seq=record["seq"],
+                        prev_hash=record["prev_hash"],
+                        entry_hash=record["entry_hash"],
+                        payload=record["payload"],
+                    )
+                except (KeyError, TypeError) as exc:
+                    raise TamperError(f"malformed audit record at line {lineno}: {exc}") from exc
+                log._entries.append(entry)
+
+        # Verify BEFORE accepting the log or opening it for further appends.
+        log.verify()
+
+        # Re-open for append now that the loaded chain is trusted.
+        log._fh = open(log._path, "a", encoding="utf-8", newline="\n")
+        return log
 
     # -- read / query ---------------------------------------------------------
 

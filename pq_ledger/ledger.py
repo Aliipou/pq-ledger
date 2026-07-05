@@ -20,19 +20,20 @@ Design rules (enforced, not aspirational):
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass, field
-from typing import Any, Iterable, Mapping
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
+from typing import Any
 
 from .audit import AuditLog
 from .errors import (
     AuthorizationError,
     DuplicateIdempotencyKeyError,
     InsufficientFundsError,
+    LedgerError,
     UnbalancedPostingError,
     UnknownAccountError,
-    LedgerError,
 )
-from .gate import Intent, Authorizer, allow_all
+from .gate import Authorizer, Intent, allow_all
 from .observability import EventEmitter, Metrics
 
 # Guard rail against silent integer overflow style bugs. Python ints are
@@ -374,13 +375,15 @@ class Ledger:
         return balances
 
     @classmethod
-    def from_audit_log(cls, audit_log: AuditLog) -> "Ledger":
+    def from_audit_log(cls, audit_log: AuditLog, **kwargs: Any) -> Ledger:
         """Rebuild a fully-populated Ledger from an existing audit log.
 
         Useful for cold-start recovery: hydrate live state from the log alone.
+        Extra keyword arguments (``authorize``, ``emitter``, ``metrics``) are
+        forwarded to the constructor so the rebuilt ledger can be re-wired.
         """
         audit_log.verify()
-        ledger = cls(audit_log=audit_log)
+        ledger = cls(audit_log=audit_log, **kwargs)
         for entry in audit_log.entries():
             p = entry.payload
             action = p.get("action")
@@ -398,11 +401,24 @@ class Ledger:
                     "idempotency_key": p["idempotency_key"],
                     "memo": p.get("memo", ""),
                     "lines": [
-                        {"account": l["account"], "debit": l["debit"], "credit": l["credit"]}
-                        for l in p["lines"]
+                        {"account": ln["account"], "debit": ln["debit"], "credit": ln["credit"]}
+                        for ln in p["lines"]
                     ],
                 }
         return ledger
+
+    @classmethod
+    def from_audit_file(cls, path: str, **kwargs: Any) -> Ledger:
+        """Rebuild a fully-populated Ledger from a persisted audit file.
+
+        Crash-recovery cold start: load the durable, file-backed audit log from
+        ``path`` (verifying its hash chain on load), reconstruct balances and
+        idempotency memory bit-for-bit, and return a Ledger that continues to
+        durably append to the SAME file. This mirrors :meth:`from_audit_log`;
+        the reload equals the pre-crash live state exactly.
+        """
+        audit_log = AuditLog.from_file(path)
+        return cls.from_audit_log(audit_log, **kwargs)
 
     # -- internals ------------------------------------------------------------
 

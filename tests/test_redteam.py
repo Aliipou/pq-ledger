@@ -15,17 +15,17 @@ import io
 import unittest
 
 from pq_ledger import (
+    EventEmitter,
+    InsufficientFundsError,
     Ledger,
-    Posting,
     Line,
     Metrics,
-    EventEmitter,
-    allow_all,
-    InsufficientFundsError,
-    UnbalancedPostingError,
+    Posting,
     TamperError,
+    UnbalancedPostingError,
+    allow_all,
 )
-from pq_ledger.audit import AuditEntry, GENESIS_PREV_HASH
+from pq_ledger.audit import AuditEntry
 from pq_ledger.ledger import MAX_AMOUNT
 
 
@@ -135,7 +135,7 @@ class RedTeamAuditTampering(unittest.TestCase):
         entries = led.audit._entries
         target = entries[2]  # the p1 posting
         forged_payload = dict(target.payload)
-        forged_lines = [dict(l) for l in forged_payload["lines"]]
+        forged_lines = [dict(ln) for ln in forged_payload["lines"]]
         forged_lines[0] = {**forged_lines[0], "debit": 999999}
         forged_payload["lines"] = forged_lines
         entries[2] = AuditEntry(
@@ -156,7 +156,7 @@ class RedTeamAuditTampering(unittest.TestCase):
         entries = led.audit._entries
         target = entries[2]
         forged_payload = dict(target.payload)
-        forged_lines = [dict(l) for l in forged_payload["lines"]]
+        forged_lines = [dict(ln) for ln in forged_payload["lines"]]
         forged_lines[0] = {**forged_lines[0], "debit": 999999}
         forged_payload["lines"] = forged_lines
         new_hash = compute_hash(target.seq, target.prev_hash, forged_payload)

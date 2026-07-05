@@ -30,3 +30,21 @@ Homepage = "https://github.com/alipourrahim/pq-ledger"
 
 [tool.setuptools]
 packages = ["pq_ledger"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+"examples/**" = ["F401", "B"]
+"tests/**" = ["B011"]
+
+[tool.mypy]
+python_version = "3.10"
+packages = ["pq_ledger"]
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true

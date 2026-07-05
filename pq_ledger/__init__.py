@@ -15,19 +15,19 @@ Public surface:
     allow_all, deny_all -- trivial capability-gate stubs
 """
 
+from .audit import AuditEntry, AuditLog
 from .errors import (
-    LedgerError,
     AuthorizationError,
-    UnbalancedPostingError,
-    InsufficientFundsError,
     DuplicateIdempotencyKeyError,
+    InsufficientFundsError,
+    LedgerError,
     TamperError,
+    UnbalancedPostingError,
     UnknownAccountError,
 )
-from .audit import AuditLog, AuditEntry
-from .ledger import Ledger, Posting, Line, Account
-from .gate import allow_all, deny_all, Intent
-from .observability import Metrics, EventEmitter
+from .gate import Intent, allow_all, deny_all
+from .ledger import Account, Ledger, Line, Posting
+from .observability import EventEmitter, Metrics
 
 __all__ = [
     "Ledger",
